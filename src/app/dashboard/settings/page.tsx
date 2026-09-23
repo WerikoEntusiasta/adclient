@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { usePortalSettings } from '@/lib/store'
+import { usePortalSettings, AdAccountSummary } from '@/lib/store'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -16,6 +16,9 @@ import {
   RotateCcw,
   Sparkles,
   ShieldCheck,
+  Search,
+  Check,
+  Radio,
 } from 'lucide-react'
 
 export default function SettingsPage() {
@@ -25,6 +28,9 @@ export default function SettingsPage() {
     agencyWhatsapp,
     fbAccessToken,
     fbAdAccountId,
+    availableAccounts,
+    setAvailableAccounts,
+    selectAccount,
     setClientBranding,
     setFbKeys,
   } = usePortalSettings()
@@ -35,54 +41,69 @@ export default function SettingsPage() {
   const [agencyInput, setAgencyInput] = useState(agencyName)
   const [whatsappInput, setWhatsappInput] = useState(agencyWhatsapp)
 
-  const [testing, setTesting] = useState(false)
+  const [loadingAccounts, setLoadingAccounts] = useState(false)
+  const [accountsList, setAccountsList] = useState<AdAccountSummary[]>(availableAccounts)
   const [testResult, setTestResult] = useState<{
     success: boolean
     message: string
-    account?: any
   } | null>(null)
   const [savedSuccess, setSavedSuccess] = useState(false)
 
-  const handleTestConnection = async () => {
-    if (!tokenInput || !accountInput) {
+  // Fetch all accounts connected to this access token
+  const handleFetchAccounts = async () => {
+    if (!tokenInput) {
       setTestResult({
         success: false,
-        message: 'Preencha o Token de Acesso e o ID da Conta de Anúncios para testar.',
+        message: 'Cole o seu Meta Access Token para buscar as contas vinculadas.',
       })
       return
     }
 
-    setTesting(true)
+    setLoadingAccounts(true)
     setTestResult(null)
 
     try {
       const url = new URL('/api/facebook/accounts', window.location.origin)
-      url.searchParams.set('accessToken', tokenInput)
-      url.searchParams.set('adAccountId', accountInput)
+      url.searchParams.set('accessToken', tokenInput.trim())
 
       const res = await fetch(url.toString())
       const data = await res.json()
 
-      if (res.ok && data.connected) {
+      if (res.ok && data.connected && data.accounts) {
+        setAccountsList(data.accounts)
+        setAvailableAccounts(data.accounts)
+
+        // If the current accountInput is in the list, keep it; otherwise pick the first
+        const exists = data.accounts.find((a: any) => a.id === accountInput)
+        if (!exists && data.accounts.length > 0) {
+          setAccountInput(data.accounts[0].id)
+          setClientInput(data.accounts[0].name)
+        }
+
         setTestResult({
           success: true,
-          message: `Conexão bem-sucedida! Conta: ${data.account?.name || accountInput} (${data.account?.currency || 'BRL'})`,
-          account: data.account,
+          message: `${data.accounts.length} conta(s) de anúncio encontrada(s) com sucesso! Escolha uma abaixo.`,
         })
       } else {
         setTestResult({
           success: false,
-          message: data.error || 'Falha ao autenticar com a Meta Graph API.',
+          message: data.error || 'Não foi possível carregar as contas vinculadas a este token.',
         })
       }
     } catch (err: any) {
       setTestResult({
         success: false,
-        message: err.message || 'Erro inesperado ao conectar à Meta API.',
+        message: err.message || 'Erro de conexão ao buscar contas na Meta API.',
       })
     } finally {
-      setTesting(false)
+      setLoadingAccounts(false)
     }
+  }
+
+  const handleSelectAccountItem = (acc: AdAccountSummary) => {
+    setAccountInput(acc.id)
+    setClientInput(acc.name)
+    selectAccount(acc.id, acc.name)
   }
 
   const handleSave = () => {
@@ -93,9 +114,12 @@ export default function SettingsPage() {
     })
 
     setFbKeys({
-      fbAccessToken: tokenInput,
-      fbAdAccountId: accountInput,
+      fbAccessToken: tokenInput.trim(),
+      fbAdAccountId: accountInput.trim(),
+      selectedAccountName: clientInput,
     })
+
+    setAvailableAccounts(accountsList)
 
     setSavedSuccess(true)
     setTimeout(() => setSavedSuccess(false), 3000)
@@ -107,6 +131,7 @@ export default function SettingsPage() {
     setClientInput('Minha Empresa')
     setAgencyInput('Agência de Performance')
     setWhatsappInput('5511999999999')
+    setAccountsList([])
 
     setClientBranding({
       clientName: 'Minha Empresa',
@@ -116,7 +141,9 @@ export default function SettingsPage() {
     setFbKeys({
       fbAccessToken: '',
       fbAdAccountId: '',
+      selectedAccountName: '',
     })
+    setAvailableAccounts([])
     setTestResult(null)
   }
 
@@ -129,7 +156,7 @@ export default function SettingsPage() {
           Configurações da Conexão & Identidade
         </h2>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Conecte a conta do cliente no Meta Ads e personalize os nomes e contatos exibidos no portal.
+          Conecte a conta do cliente via Token, selecione qual conta exibir e personalize a identidade do portal.
         </p>
       </div>
 
@@ -152,36 +179,38 @@ export default function SettingsPage() {
             )}
           </div>
           <CardDescription className="text-xs">
-            As chaves de leitura são mantidas de forma segura no seu navegador para alimentar o dashboard do cliente.
+            Cole o Token de Acesso da Meta para puxar automaticamente todas as contas de anúncio às quais você tem acesso.
           </CardDescription>
         </CardHeader>
 
         <CardContent className="space-y-4">
+          {/* Token input & Fetch button */}
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium">Meta Access Token (Token de Acesso)</Label>
-            <Input
-              type="password"
-              placeholder="Ex: EAAB..."
-              value={tokenInput}
-              onChange={(e) => setTokenInput(e.target.value)}
-              className="bg-background/50 text-xs font-mono h-9 border-border/60"
-            />
+            <Label className="text-xs font-medium">Meta Access Token (Token de Acesso do Usuário)</Label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Input
+                type="password"
+                placeholder="Cole o token de acesso (EAAB...)"
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                className="bg-background/50 text-xs font-mono h-9 border-border/60 flex-1"
+              />
+              <Button
+                type="button"
+                onClick={handleFetchAccounts}
+                disabled={loadingAccounts || !tokenInput}
+                className="text-xs h-9 gap-1.5 shrink-0 bg-primary hover:bg-primary/90"
+              >
+                <Search className={`h-3.5 w-3.5 ${loadingAccounts ? 'animate-spin' : ''}`} />
+                {loadingAccounts ? 'Buscando Contas...' : 'Buscar Contas'}
+              </Button>
+            </div>
             <p className="text-[11px] text-muted-foreground">
-              Token com permissões de leitura (<code className="text-[10px]">ads_read</code>, <code className="text-[10px]">read_insights</code>).
+              Requer permissões de leitura da Graph API (<code className="text-[10px]">ads_read</code>, <code className="text-[10px]">read_insights</code>).
             </p>
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium">ID da Conta de Anúncios (Ad Account ID)</Label>
-            <Input
-              placeholder="Ex: act_1234567890 ou 1234567890"
-              value={accountInput}
-              onChange={(e) => setAccountInput(e.target.value)}
-              className="bg-background/50 text-xs font-mono h-9 border-border/60"
-            />
-          </div>
-
-          {/* Test connection alert */}
+          {/* Test feedback */}
           {testResult && (
             <div
               className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
@@ -199,17 +228,72 @@ export default function SettingsPage() {
             </div>
           )}
 
-          <div className="flex gap-2 pt-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleTestConnection}
-              disabled={testing}
-              className="text-xs h-8"
-            >
-              {testing ? 'Testando Conexão...' : 'Testar Conexão com a Meta'}
-            </Button>
+          {/* Ad Accounts Selection List */}
+          {accountsList.length > 0 && (
+            <div className="space-y-2 pt-2">
+              <Label className="text-xs font-medium flex items-center justify-between">
+                <span>Escolha a Conta de Anúncios Ativa:</span>
+                <span className="text-[11px] text-muted-foreground font-normal">
+                  {accountsList.length} conta(s) encontrada(s)
+                </span>
+              </Label>
+
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {accountsList.map((acc) => {
+                  const isSelected = accountInput === acc.id
+                  return (
+                    <div
+                      key={acc.id}
+                      onClick={() => handleSelectAccountItem(acc)}
+                      className={`flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer ${
+                        isSelected
+                          ? 'border-primary bg-primary/10 shadow-sm'
+                          : 'border-border/60 bg-muted/20 hover:border-border hover:bg-muted/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className={`flex h-6 w-6 items-center justify-center rounded-full border ${
+                            isSelected
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-muted-foreground/40'
+                          }`}
+                        >
+                          {isSelected && <Check className="h-3.5 w-3.5" />}
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-semibold truncate text-foreground">
+                            {acc.name}
+                          </h4>
+                          <p className="text-[11px] text-muted-foreground font-mono mt-0.5">
+                            {acc.id} {acc.currency ? `• Moeda: ${acc.currency}` : ''}
+                          </p>
+                        </div>
+                      </div>
+
+                      {isSelected && (
+                        <Badge variant="default" className="text-[10px] shrink-0">
+                          Conta Ativa
+                        </Badge>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Manual ID Input fallback */}
+          <div className="space-y-1.5 pt-2 border-t border-border/40">
+            <Label className="text-xs font-medium text-muted-foreground">
+              ID da Conta Selecionada (Ad Account ID)
+            </Label>
+            <Input
+              placeholder="Ex: act_1234567890"
+              value={accountInput}
+              onChange={(e) => setAccountInput(e.target.value)}
+              className="bg-background/50 text-xs font-mono h-9 border-border/60"
+            />
           </div>
         </CardContent>
       </Card>
